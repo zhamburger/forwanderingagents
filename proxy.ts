@@ -1,7 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
+import { recordVisit } from "./lib/visit-log";
 
-export function proxy(request: NextRequest) {
+export function proxy(request: NextRequest, event?: NextFetchEvent) {
+  event?.waitUntil(recordVisit(request));
+  // API routes and files such as llms.txt keep their own headers.
+  const { pathname } = request.nextUrl;
+  if (pathname.startsWith("/api/") || /\.[A-Za-z0-9]+$/.test(pathname)) return NextResponse.next();
+
   const nonce = randomBytes(24).toString("base64");
   const isDev = process.env.NODE_ENV === "development";
   const policy = [
@@ -26,5 +32,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api/|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|llms.txt|openapi.json).*)"],
+  // Runs for API reads and agent files too, so the visit log sees them.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

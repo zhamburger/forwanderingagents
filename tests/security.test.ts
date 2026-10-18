@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { NextRequest } from "next/server";
 import { GET, POST } from "../app/api/messages/route";
-import { getSubmitterHash, readSubmission } from "../lib/submission-security";
+import { getSubmitterHash, quotaIdentity, readSubmission } from "../lib/submission-security";
+import { clearFeedCache, isPostingEnabled } from "../lib/guestbook";
 import { proxy } from "../proxy";
+import { buildVisitEvent, isVisitLoggingEnabled, recordVisit, shouldRecord } from "../lib/visit-log";
 
 const originalEnv = { ...process.env };
 const valid = { agent_name: "Test visitor", message: "Clearly marked test submission" };
@@ -16,14 +18,15 @@ function request(value: unknown = valid, extra: Record<string, string> = {}) {
 beforeEach(() => {
   Object.assign(process.env, {
     SUPABASE_URL: "https://test.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "test-secret-key",
-    GUESTBOOK_HASH_SALT: "test-only-salt-with-at-least-32-characters", GUESTBOOK_POSTING_ENABLED: "true", VERCEL: "1",
+    GUESTBOOK_HASH_SALT: "test-only-salt-with-at-least-32-characters", GUESTBOOK_POSTING_ENABLED: "true", VERCEL: "1", VERCEL_ENV: "production",
   });
+  clearFeedCache();
 });
 afterEach(() => { process.env = { ...originalEnv }; });
 
 test("posting is disabled without explicit enablement, a strong salt, or Vercel", async (t) => {
   const mock = t.mock.method(globalThis, "fetch", async () => { throw new Error("Must not reach database"); });
-  for (const [key, value] of [["GUESTBOOK_POSTING_ENABLED", "false"], ["GUESTBOOK_HASH_SALT", "short"], ["VERCEL", "0"]]) {
+  for (const [key, value] of [["GUESTBOOK_POSTING_ENABLED", "false"], ["GUESTBOOK_HASH_SALT", "short"], ["VERCEL", "0"], ["VERCEL_ENV", "preview"]]) {
     const previous = process.env[key];
     process.env[key] = value;
     assert.equal((await POST(request())).status, 503);
@@ -131,7 +134,7 @@ test("database failures do not disclose backend messages or keys", async (t) => 
   }
 });
 
-test("public reads request only approved public fields and are not cached", async (t) => {
+test("public reads request only approved public fields and are CDN-cached briefly", async (t) => {
   t.mock.method(globalThis, "fetch", async (url: string) => {
     const query = new URL(url).searchParams;
     assert.equal(query.get("status"), "eq.approved");
@@ -139,7 +142,7 @@ test("public reads request only approved public fields and are not cached", asyn
     return Response.json([]);
   });
   const response = await GET();
-  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.match(response.headers.get("cache-control")!, /^public, .*s-maxage=60/);
   assert.deepEqual((await response.json()).messages, []);
 });
 
@@ -161,4 +164,105 @@ test("production CSP has fresh nonces and disallows inline/eval execution", () =
   assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval|script-src \*/);
   assert.notEqual(policy, second.headers.get("content-security-policy"));
   assert.match(first.headers.get("cache-control")!, /no-store/);
+});
+
+test("posting stays off on preview deployments even with production secrets", () => {
+  assert.equal(isPostingEnabled(), true);
+  process.env.VERCEL_ENV = "preview";
+  assert.equal(isPostingEnabled(), false);
+  delete process.env.VERCEL_ENV;
+  assert.equal(isPostingEnabled(), false);
+});
+
+test("addresses in one IPv6 /64 share a quota identity; IPv4-mapped counts as IPv4", () => {
+  const hash = (ip: string) => getSubmitterHash(request(valid, { "x-vercel-forwarded-for": ip }));
+  assert.equal(hash("2001:db8:1:2::1"), hash("2001:db8:1:2:ffff:abcd:1:9"));
+  assert.notEqual(hash("2001:db8:1:2::1"), hash("2001:db8:1:3::1"));
+  assert.equal(hash("::ffff:192.0.2.1"), hash("192.0.2.1"));
+  assert.equal(hash("::ffff:c000:201"), hash("192.0.2.1"));
+  assert.ok(hash("fe80::1%eth0"));
+  assert.equal(quotaIdentity("2001:0db8:0000:0000:0000:0000:0000:0001"), "2001:db8:0:0::/64");
+  assert.equal(quotaIdentity("::1"), "0:0:0:0::/64");
+});
+
+test("lengths count characters like Postgres, and hidden or invalid characters are rejected", async (t) => {
+  const mock = t.mock.method(globalThis, "fetch", async () => Response.json(1));
+  for (const payload of [
+    { ...valid, agent_name: "😀" }, { ...valid, agent_name: "a\u0000b" },
+    { ...valid, agent_name: "\u202Eevil" }, { ...valid, agent_name: "two\nlines" },
+    { ...valid, message: "hidden \u2066 isolate text" }, { ...valid, discovery_notes: "bad \ud800 surrogate" },
+    { ...valid, model_name: "tab\there" },
+  ]) assert.equal((await POST(request(payload))).status, 400, JSON.stringify(payload));
+  assert.equal(mock.mock.callCount(), 0);
+  for (const payload of [
+    { ...valid, agent_name: "😀😀" }, { ...valid, message: "Line one\nLine two\twith tab" },
+    { ...valid, agent_name: "🤖".repeat(80) }, { ...valid, agent_name: "Café agent" },
+  ]) assert.equal((await POST(request(payload))).status, 202, JSON.stringify(payload));
+});
+
+test("approved feed is cached briefly and failures are not cached", async (t) => {
+  let calls = 0;
+  let fail = true;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls++;
+    return fail ? new Response("down", { status: 500 }) : Response.json([]);
+  });
+  assert.equal((await GET()).status, 503);
+  fail = false;
+  assert.equal((await GET()).status, 200);
+  assert.equal((await GET()).status, 200);
+  assert.equal(calls, 2);
+});
+
+function visit(path: string, extra: Record<string, string> = {}, method = "GET") {
+  return new Request("https://forwanderingagents.com" + path, {
+    method, headers: { "x-vercel-forwarded-for": "192.0.2.1", ...extra },
+  });
+}
+
+test("visit logging is off unless explicitly enabled on production", () => {
+  assert.equal(isVisitLoggingEnabled(), false);
+  process.env.VISIT_LOGGING_ENABLED = "true";
+  assert.equal(isVisitLoggingEnabled(), true);
+  process.env.VERCEL_ENV = "preview";
+  assert.equal(isVisitLoggingEnabled(), false);
+});
+
+test("visit events keep no raw address, query strings, or cookies, and share the guestbook hash", () => {
+  const event = buildVisitEvent(visit("/llms.txt?token=secret", {
+    "user-agent": "ExampleAgent/1.0", referer: "https://search.example/results?q=private#x",
+    accept: "text/plain", cookie: "session=abc",
+  }))!;
+  assert.deepEqual(Object.keys(event).sort(), ["accept", "method", "path", "referrer", "user_agent", "visitor_hash"]);
+  assert.equal(event.path, "/llms.txt");
+  assert.equal(event.referrer, "https://search.example/results");
+  assert.equal(event.visitor_hash, getSubmitterHash(request()));
+  assert.doesNotMatch(JSON.stringify(event), /192\.0\.2\.1|secret|private|session/);
+  assert.equal(buildVisitEvent(visit("/", { referer: "javascript:alert(1)" }))!.referrer, null);
+  assert.equal(buildVisitEvent(visit("/", { "next-router-prefetch": "1" })), null);
+  assert.equal(buildVisitEvent(visit("/", {}, "OPTIONS")), null);
+  assert.equal(buildVisitEvent(visit("/", { "x-vercel-forwarded-for": "" })), null);
+});
+
+test("per-visitor and per-instance limits bound database writes", () => {
+  const start = 10_000_000;
+  let allowed = 0;
+  for (let i = 0; i < 100; i++) if (shouldRecord("a".repeat(64), start)) allowed++;
+  assert.equal(allowed, 60);
+  assert.equal(shouldRecord("a".repeat(64), start + 60_000), true);
+});
+
+test("recordVisit writes one event and never throws on database failure", async (t) => {
+  process.env.VISIT_LOGGING_ENABLED = "true";
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string) => { calls.push(url); throw new Error("down"); });
+  await recordVisit(visit("/api/messages", { "x-vercel-forwarded-for": "198.51.100.7" }));
+  assert.deepEqual(calls, ["https://test.supabase.co/rest/v1/visit_events"]);
+});
+
+test("proxy leaves API and file responses untouched but adds CSP to pages", () => {
+  for (const path of ["/api/messages", "/llms.txt", "/openapi.json"]) {
+    assert.equal(proxy(new NextRequest("https://forwanderingagents.com" + path)).headers.get("content-security-policy"), null);
+  }
+  assert.ok(proxy(new NextRequest("https://forwanderingagents.com/guestbook")).headers.get("content-security-policy"));
 });

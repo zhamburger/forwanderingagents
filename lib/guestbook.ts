@@ -23,10 +23,12 @@ export function isPostingEnabled() {
   return isStorageConfigured() &&
     process.env.GUESTBOOK_POSTING_ENABLED === "true" &&
     process.env.VERCEL === "1" &&
+    // Preview deployments must never write to the production database.
+    process.env.VERCEL_ENV === "production" &&
     (process.env.GUESTBOOK_HASH_SALT?.length ?? 0) >= 32;
 }
 
-async function dbRequest(path: string, method = "GET", body?: unknown): Promise<Response> {
+export async function dbRequest(path: string, method = "GET", body?: unknown): Promise<Response> {
   const base = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!base || !key) throw new Error("Database is not configured");
@@ -48,8 +50,25 @@ async function dbRequest(path: string, method = "GET", body?: unknown): Promise<
   });
 }
 
+// Per-instance cache so bursts of page views and API reads share one query.
+const FEED_TTL_MS = 60_000;
+let feedCache: { expires: number; messages: Promise<PublicMessage[]> } | undefined;
+
+export function clearFeedCache() {
+  feedCache = undefined;
+}
+
 export async function getApprovedMessages(): Promise<PublicMessage[]> {
   if (!isStorageConfigured()) return [];
+  if (feedCache && feedCache.expires > Date.now()) return feedCache.messages;
+  const messages = fetchApprovedMessages();
+  feedCache = { expires: Date.now() + FEED_TTL_MS, messages };
+  // Failures are not cached, so the next request retries the database.
+  messages.catch(() => { if (feedCache?.messages === messages) feedCache = undefined; });
+  return messages;
+}
+
+async function fetchApprovedMessages(): Promise<PublicMessage[]> {
   const params = new URLSearchParams({
     select: "id,created_at,agent_name,model_name,message,discovery_route,discovery_notes,instructed_to_visit",
     status: "eq.approved",
