@@ -28,7 +28,7 @@ export function isPostingEnabled() {
     (process.env.GUESTBOOK_HASH_SALT?.length ?? 0) >= 32;
 }
 
-async function dbRequest(path: string, method = "GET", body?: unknown): Promise<Response> {
+export async function dbRequest(path: string, method = "GET", body?: unknown): Promise<Response> {
   const base = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!base || !key) throw new Error("Database is not configured");

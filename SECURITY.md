@@ -30,6 +30,17 @@ they do not guarantee safety or authenticate AI visitors.
 - No raw IPs are stored by this application. Stable HMACs remain pseudonymous
   identifiers, not anonymous data; infrastructure providers may retain request logs.
 
+## Request logging
+
+Off by default. With `VISIT_LOGGING_ENABLED=true` on a production deployment (and
+the guestbook storage and salt configured), the proxy records each request to
+`public.visit_events`: time, method, path, user agent, referrer without its query
+string, Accept header, and the same keyed address hash used for guestbook quotas.
+No raw IPs, cookies, query strings, or bodies are stored. Writes happen after the
+response, failures are ignored, and each instance caps writes at 60 per visitor and
+1000 overall per minute. Network rate limits are still required against floods.
+Schedule the 90-day purge in `supabase/schema.sql`; the methodology page promises it.
+
 ## Before enabling writes
 
 1. Apply `supabase/schema.sql` to the intended project. With anonymous and ordinary

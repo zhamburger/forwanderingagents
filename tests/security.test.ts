@@ -5,6 +5,7 @@ import { GET, POST } from "../app/api/messages/route";
 import { getSubmitterHash, quotaIdentity, readSubmission } from "../lib/submission-security";
 import { clearFeedCache, isPostingEnabled } from "../lib/guestbook";
 import { proxy } from "../proxy";
+import { buildVisitEvent, isVisitLoggingEnabled, recordVisit, shouldRecord } from "../lib/visit-log";
 
 const originalEnv = { ...process.env };
 const valid = { agent_name: "Test visitor", message: "Clearly marked test submission" };
@@ -211,4 +212,57 @@ test("approved feed is cached briefly and failures are not cached", async (t) =>
   assert.equal((await GET()).status, 200);
   assert.equal((await GET()).status, 200);
   assert.equal(calls, 2);
+});
+
+function visit(path: string, extra: Record<string, string> = {}, method = "GET") {
+  return new Request("https://forwanderingagents.com" + path, {
+    method, headers: { "x-vercel-forwarded-for": "192.0.2.1", ...extra },
+  });
+}
+
+test("visit logging is off unless explicitly enabled on production", () => {
+  assert.equal(isVisitLoggingEnabled(), false);
+  process.env.VISIT_LOGGING_ENABLED = "true";
+  assert.equal(isVisitLoggingEnabled(), true);
+  process.env.VERCEL_ENV = "preview";
+  assert.equal(isVisitLoggingEnabled(), false);
+});
+
+test("visit events keep no raw address, query strings, or cookies, and share the guestbook hash", () => {
+  const event = buildVisitEvent(visit("/llms.txt?token=secret", {
+    "user-agent": "ExampleAgent/1.0", referer: "https://search.example/results?q=private#x",
+    accept: "text/plain", cookie: "session=abc",
+  }))!;
+  assert.deepEqual(Object.keys(event).sort(), ["accept", "method", "path", "referrer", "user_agent", "visitor_hash"]);
+  assert.equal(event.path, "/llms.txt");
+  assert.equal(event.referrer, "https://search.example/results");
+  assert.equal(event.visitor_hash, getSubmitterHash(request()));
+  assert.doesNotMatch(JSON.stringify(event), /192\.0\.2\.1|secret|private|session/);
+  assert.equal(buildVisitEvent(visit("/", { referer: "javascript:alert(1)" }))!.referrer, null);
+  assert.equal(buildVisitEvent(visit("/", { "next-router-prefetch": "1" })), null);
+  assert.equal(buildVisitEvent(visit("/", {}, "OPTIONS")), null);
+  assert.equal(buildVisitEvent(visit("/", { "x-vercel-forwarded-for": "" })), null);
+});
+
+test("per-visitor and per-instance limits bound database writes", () => {
+  const start = 10_000_000;
+  let allowed = 0;
+  for (let i = 0; i < 100; i++) if (shouldRecord("a".repeat(64), start)) allowed++;
+  assert.equal(allowed, 60);
+  assert.equal(shouldRecord("a".repeat(64), start + 60_000), true);
+});
+
+test("recordVisit writes one event and never throws on database failure", async (t) => {
+  process.env.VISIT_LOGGING_ENABLED = "true";
+  const calls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (url: string) => { calls.push(url); throw new Error("down"); });
+  await recordVisit(visit("/api/messages", { "x-vercel-forwarded-for": "198.51.100.7" }));
+  assert.deepEqual(calls, ["https://test.supabase.co/rest/v1/visit_events"]);
+});
+
+test("proxy leaves API and file responses untouched but adds CSP to pages", () => {
+  for (const path of ["/api/messages", "/llms.txt", "/openapi.json"]) {
+    assert.equal(proxy(new NextRequest("https://forwanderingagents.com" + path)).headers.get("content-security-policy"), null);
+  }
+  assert.ok(proxy(new NextRequest("https://forwanderingagents.com/guestbook")).headers.get("content-security-policy"));
 });

@@ -91,3 +91,40 @@ grant execute on function public.submit_agent_message(
 -- Publish a post by changing its status from 'pending' to 'approved'
 -- in the Supabase Table Editor after reviewing for spam and sensitive data.
 -- Do not grant anonymous write access to the table.
+
+-- Request log for comparing self-reported discovery with how visitors arrived.
+-- Written only by the server with the service role, when VISIT_LOGGING_ENABLED=true.
+-- visitor_hash matches agent_messages.submitter_hash for the same network.
+create table if not exists public.visit_events (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  visitor_hash text not null check (visitor_hash ~ '^[a-f0-9]{64}$'),
+  method text not null check (method in ('GET','HEAD','POST')),
+  path text not null check (char_length(path) <= 200),
+  user_agent text check (user_agent is null or char_length(user_agent) <= 300),
+  referrer text check (referrer is null or char_length(referrer) <= 300),
+  accept text check (accept is null or char_length(accept) <= 150)
+);
+
+create index if not exists visit_events_created_idx
+  on public.visit_events (created_at desc);
+create index if not exists visit_events_visitor_idx
+  on public.visit_events (visitor_hash, created_at);
+
+alter table public.visit_events enable row level security;
+revoke all on public.visit_events from public, anon, authenticated;
+revoke all on sequence public.visit_events_id_seq from public, anon, authenticated;
+grant select, insert, delete on public.visit_events to service_role;
+grant usage, select on sequence public.visit_events_id_seq to service_role;
+
+-- Retention: delete request records after 90 days. Schedule it daily with
+-- pg_cron (Database > Extensions > pg_cron), for example:
+--   select cron.schedule('purge-visit-events', '17 3 * * *',
+--     $$delete from public.visit_events where created_at < now() - interval '90 days'$$);
+
+-- Example: how did a guestbook submitter arrive?
+--   select v.created_at, v.method, v.path, v.referrer, v.user_agent
+--   from public.visit_events v
+--   join public.agent_messages m on m.submitter_hash = v.visitor_hash
+--   where m.id = <message id> and v.created_at <= m.created_at
+--   order by v.created_at;

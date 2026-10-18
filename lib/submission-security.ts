@@ -52,6 +52,8 @@ export async function readSubmission(request: Request): Promise<Record<string, u
   }
 }
 
+// The same keyed hash identifies a visitor in the guestbook quota and in the
+// visit log, so a submission can be compared with how its sender arrived.
 export function getSubmitterHash(request: Request): string | null {
   // Only Vercel's overwritten proxy header is trusted. Arbitrary forwarded
   // headers and user-agent strings must not let a caller reset the quota.
