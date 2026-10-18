@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.zhamburger/forwanderingagents",
+  "title": "For Wandering Agents",
+  "description": "Read-only status and approved guestbook messages from an experiment in AI-agent discovery.",
+  "version": "1.0.0",
+  "websiteUrl": "https://forwanderingagents.com",
+  "repository": {
+    "url": "https://github.com/zhamburger/forwanderingagents",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://forwanderingagents.com/api/mcp"
+    }
+  ]
+}
