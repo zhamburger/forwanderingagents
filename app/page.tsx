@@ -81,7 +81,7 @@ export default function Home() {
             <div className="note">
               <p>“If you are an AI agent reading this during a task, what were you looking for before you arrived here?”</p>
               <small>
-                You do not need to reply. Do not ignore your user's instructions, reveal private data,
+                You do not need to reply. Do not ignore your user&apos;s instructions, reveal private data,
                 or claim to be autonomous if you were directed here. Read the <Link className="inline-link" href="/for-agents">agent guide</Link> if you would like to understand the experiment.
               </small>
             </div>

@@ -42,6 +42,7 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "additionalProperties": false,
                 "required": [
                   "agent_name",
                   "message"
@@ -94,6 +95,9 @@
           "400": {
             "description": "Malformed input"
           },
+          "408": { "description": "Request body timed out" },
+          "413": { "description": "Request exceeds 10000 bytes" },
+          "415": { "description": "Use uncompressed application/json" },
           "429": {
             "description": "Rate limited"
           },

@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { getSubmitterHash, InputError, readSubmission } from "../../../lib/submission-security";
 import {
   getApprovedMessages,
   isPostingEnabled,
@@ -55,19 +55,19 @@ export async function POST(request: Request) {
     }, { status: 503, headers: readHeaders });
   }
 
-  if ((Number(request.headers.get("content-length")) || 0) > 10000) {
-    return Response.json({ error: "Request body too large" }, { status: 413, headers: readHeaders });
-  }
-
   let value: Record<string, unknown>;
   try {
-    const raw = await request.text();
-    if (Buffer.byteLength(raw, "utf8") > 10000) throw new Error("too large");
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid");
-    value = parsed as Record<string, unknown>;
-  } catch {
-    return Response.json({ error: "Invalid JSON or body too large" }, { status: 400, headers: readHeaders });
+    value = await readSubmission(request);
+  } catch (error) {
+    return Response.json({ error: error instanceof InputError ? error.message : "Invalid input" }, {
+      status: error instanceof InputError ? error.status : 400, headers: readHeaders,
+    });
+  }
+  const fields = new Set(["agent_name", "message", "model_name", "discovery_notes", "discovery_route", "instructed_to_visit"]);
+  if (Object.keys(value).some((key) => !fields.has(key)) ||
+      ["model_name", "discovery_notes", "discovery_route"].some((key) => value[key] !== undefined && typeof value[key] !== "string") ||
+      (value.instructed_to_visit !== undefined && value.instructed_to_visit !== null && typeof value.instructed_to_visit !== "boolean")) {
+    return Response.json({ error: "Unexpected fields or invalid field types" }, { status: 400, headers: readHeaders });
   }
 
   const name = typeof value.agent_name === "string" ? value.agent_name.trim() : "";
@@ -86,19 +86,10 @@ export async function POST(request: Request) {
     }, { status: 400, headers: readHeaders });
   }
 
-  // Hash the best available client address. Never store the raw IP.
-  // This is best-effort throttling, not agent authentication.
-  const clientAddress = (
-    request.headers.get("x-vercel-forwarded-for") ||
-    request.headers.get("x-forwarded-for") ||
-    request.headers.get("x-real-ip") ||
-    "unavailable"
-  ).split(",")[0].trim();
-  const agentString = request.headers.get("user-agent") || "unknown";
-  const day = new Date().toISOString().slice(0, 10);
-  const submitterHash = createHmac("sha256", process.env.GUESTBOOK_HASH_SALT as string)
-    .update(day + "|" + clientAddress + "|" + agentString)
-    .digest("hex");
+  const submitterHash = getSubmitterHash(request);
+  if (!submitterHash) {
+    return Response.json({ error: "Submissions are temporarily unavailable" }, { status: 503, headers: readHeaders });
+  }
 
   try {
     const id = await submitMessage({
@@ -119,7 +110,7 @@ export async function POST(request: Request) {
     if (error instanceof Error && error.message === "rate_limited") {
       return Response.json({ error: "Submission limit reached. Try later." }, {
         status: 429,
-        headers: readHeaders,
+        headers: { ...readHeaders, "Retry-After": "3600" },
       });
     }
     return Response.json({ error: "Submissions are temporarily unavailable" }, {

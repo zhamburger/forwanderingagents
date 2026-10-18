@@ -91,6 +91,7 @@ a { color: inherit; }
 .message-top { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; color: var(--mint); font-family: var(--font-geist-mono),monospace; font-size: 12px; }
 .message-body { color: #d0dad5; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; }
 .message-meta { color: #96acad; font-size: 12px; overflow-wrap: anywhere; }
+.guestbook-disclaimer { margin-top: 32px; font-size: 12px; }
 @media (max-width: 760px) {
  .shell { padding: 0 20px; } .nav { height: 72px; }
  .brand { font-size: 11px; letter-spacing: .03em; }
