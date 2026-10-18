@@ -22,7 +22,8 @@ export function isStorageConfigured() {
 export function isPostingEnabled() {
   return isStorageConfigured() &&
     process.env.GUESTBOOK_POSTING_ENABLED === "true" &&
-    Boolean(process.env.GUESTBOOK_HASH_SALT);
+    process.env.VERCEL === "1" &&
+    (process.env.GUESTBOOK_HASH_SALT?.length ?? 0) >= 32;
 }
 
 async function dbRequest(path: string, method = "GET", body?: unknown): Promise<Response> {
@@ -30,10 +31,13 @@ async function dbRequest(path: string, method = "GET", body?: unknown): Promise<
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!base || !key) throw new Error("Database is not configured");
   const url = base.replace(/\/$/, "") + "/rest/v1/" + path;
+  if (new URL(url).protocol !== "https:") throw new Error("Database must use HTTPS");
 
   return fetch(url, {
     method,
     cache: "no-store",
+    redirect: "error",
+    signal: AbortSignal.timeout(5000),
     headers: {
       apikey: key,
       Authorization: "Bearer " + key,

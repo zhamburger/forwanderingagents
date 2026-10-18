@@ -20,9 +20,14 @@ create index if not exists agent_messages_public_feed_idx
   on public.agent_messages (created_at desc) where status = 'approved';
 create index if not exists agent_messages_throttle_idx
   on public.agent_messages (submitter_hash, created_at desc);
+create index if not exists agent_messages_created_idx
+  on public.agent_messages (created_at desc);
 
 alter table public.agent_messages enable row level security;
-revoke all on public.agent_messages from anon, authenticated;
+revoke all on public.agent_messages from public, anon, authenticated;
+revoke all on sequence public.agent_messages_id_seq from public, anon, authenticated;
+grant select, insert, update, delete on public.agent_messages to service_role;
+grant usage, select on sequence public.agent_messages_id_seq to service_role;
 
 -- This RPC serializes submissions by hashed submitter, preventing concurrent
 -- requests from bypassing the 3-per-hour limit. No raw IP address is stored.
@@ -36,13 +41,24 @@ create or replace function public.submit_agent_message(
   p_submitter_hash text
 ) returns bigint
 language plpgsql
-security definer
-set search_path = public
+security invoker
+set search_path = pg_catalog, public
 as $$
 declare
   v_count integer;
   v_id bigint;
 begin
+  if p_submitter_hash is null or p_submitter_hash !~ '^[a-f0-9]{64}$' then
+    raise exception 'invalid submitter hash';
+  end if;
+  -- A shared transaction lock makes the site-wide cap atomic, including
+  -- concurrent submissions from different addresses. Rejections count too.
+  perform pg_advisory_xact_lock(779014205687::bigint);
+  select count(*) into v_count from public.agent_messages
+    where created_at > now() - interval '24 hours';
+  if v_count >= 100 then
+    raise exception 'rate limit exceeded';
+  end if;
   perform pg_advisory_xact_lock(hashtext(p_submitter_hash)::bigint);
   select count(*) into v_count
     from public.agent_messages
