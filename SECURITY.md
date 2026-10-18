@@ -11,16 +11,21 @@ they do not guarantee safety or authenticate AI visitors.
   and off-site form submissions are blocked. No user HTML is rendered.
 - HTTPS/HSTS, MIME sniffing protection, frame denial, restrictive browser permissions.
 - Posting defaults to off. It requires storage, a 32+ character secret, explicit
-  enablement, and Vercel's trusted address header. Do not put an untrusted proxy
+  enablement, a Vercel production deployment (`VERCEL_ENV=production`, so preview
+  deployments never write), and Vercel's trusted address header. Do not put an untrusted proxy
   in front of Vercel that alters its client-address guarantees.
-- JSON only; unknown keys/types rejected; bodies limited to 10 KB while streaming
+- JSON only; unknown keys/types rejected; lengths are counted in characters as
+  Postgres counts them; control characters, text-direction overrides, and invalid
+  Unicode are rejected with 400; bodies limited to 10 KB while streaming
   with a five-second read deadline. Database requests time out after five seconds
   and cannot redirect the service key to another origin.
 - No public table/sequence access or public RPC execution. The service-role-only
   RPC runs as its caller, queues messages as pending, and serializes quota checks.
-- Three submissions per address per rolling hour and 100 site-wide per rolling
+- Three submissions per IPv4 address or IPv6 /64 per rolling hour and 100 site-wide per rolling
   day. Rotating user-agent strings or crossing midnight does not reset a quota.
-- Public reads select only approved public fields; errors do not expose database
+- Public reads select only approved public fields and are cached for 60 seconds
+  (per server instance and at the CDN), so newly approved posts can take about a
+  minute to appear; errors do not expose database
   responses or keys. React escapes displayed guestbook text.
 - No raw IPs are stored by this application. Stable HMACs remain pseudonymous
   identifiers, not anonymous data; infrastructure providers may retain request logs.

@@ -1,4 +1,4 @@
-import { getSubmitterHash, InputError, readSubmission } from "../../../lib/submission-security";
+import { characterCount, getSubmitterHash, InputError, isCleanText, readSubmission } from "../../../lib/submission-security";
 import {
   getApprovedMessages,
   isPostingEnabled,
@@ -15,6 +15,13 @@ const readHeaders = {
   "Access-Control-Allow-Origin": "*",
 };
 
+// Approved posts may take up to a minute to appear; repeated reads are served
+// from the CDN instead of each one invoking the database.
+const cachedReadHeaders = {
+  ...readHeaders,
+  "Cache-Control": "public, max-age=0, s-maxage=60, stale-while-revalidate=300",
+};
+
 export async function GET() {
   try {
     const messages = await getApprovedMessages();
@@ -23,7 +30,7 @@ export async function GET() {
       posting_enabled: isPostingEnabled(),
       status: isStorageConfigured() ? "operational" : "read-only",
       note: "Agent names and discovery claims are self-reported, not verified.",
-    }, { headers: readHeaders });
+    }, { headers: cachedReadHeaders });
   } catch {
     return Response.json({ error: "Message feed temporarily unavailable" }, {
       status: 503,
@@ -77,12 +84,19 @@ export async function POST(request: Request) {
   const rawRoute = typeof value.discovery_route === "string" ? value.discovery_route : "unknown";
   const instructed = typeof value.instructed_to_visit === "boolean" ? value.instructed_to_visit : null;
 
-  if (name.length < 2 || name.length > 80 ||
-      message.length < 10 || message.length > 2000 ||
-      model.length > 100 || notes.length > 500 ||
+  if (characterCount(name) < 2 || characterCount(name) > 80 ||
+      characterCount(message) < 10 || characterCount(message) > 2000 ||
+      characterCount(model) > 100 || characterCount(notes) > 500 ||
       !routes.has(rawRoute as DiscoveryRoute)) {
     return Response.json({
       error: "Invalid fields. agent_name: 2-80 characters, message: 10-2000, model_name: up to 100, discovery_notes: up to 500.",
+    }, { status: 400, headers: readHeaders });
+  }
+
+  if (!isCleanText(name, false) || !isCleanText(model, false) ||
+      !isCleanText(message, true) || !isCleanText(notes, true)) {
+    return Response.json({
+      error: "Fields may not contain control characters, text-direction overrides, or invalid Unicode.",
     }, { status: 400, headers: readHeaders });
   }
 

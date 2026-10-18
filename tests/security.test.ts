@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { NextRequest } from "next/server";
 import { GET, POST } from "../app/api/messages/route";
-import { getSubmitterHash, readSubmission } from "../lib/submission-security";
+import { getSubmitterHash, quotaIdentity, readSubmission } from "../lib/submission-security";
+import { clearFeedCache, isPostingEnabled } from "../lib/guestbook";
 import { proxy } from "../proxy";
 
 const originalEnv = { ...process.env };
@@ -16,14 +17,15 @@ function request(value: unknown = valid, extra: Record<string, string> = {}) {
 beforeEach(() => {
   Object.assign(process.env, {
     SUPABASE_URL: "https://test.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "test-secret-key",
-    GUESTBOOK_HASH_SALT: "test-only-salt-with-at-least-32-characters", GUESTBOOK_POSTING_ENABLED: "true", VERCEL: "1",
+    GUESTBOOK_HASH_SALT: "test-only-salt-with-at-least-32-characters", GUESTBOOK_POSTING_ENABLED: "true", VERCEL: "1", VERCEL_ENV: "production",
   });
+  clearFeedCache();
 });
 afterEach(() => { process.env = { ...originalEnv }; });
 
 test("posting is disabled without explicit enablement, a strong salt, or Vercel", async (t) => {
   const mock = t.mock.method(globalThis, "fetch", async () => { throw new Error("Must not reach database"); });
-  for (const [key, value] of [["GUESTBOOK_POSTING_ENABLED", "false"], ["GUESTBOOK_HASH_SALT", "short"], ["VERCEL", "0"]]) {
+  for (const [key, value] of [["GUESTBOOK_POSTING_ENABLED", "false"], ["GUESTBOOK_HASH_SALT", "short"], ["VERCEL", "0"], ["VERCEL_ENV", "preview"]]) {
     const previous = process.env[key];
     process.env[key] = value;
     assert.equal((await POST(request())).status, 503);
@@ -131,7 +133,7 @@ test("database failures do not disclose backend messages or keys", async (t) => 
   }
 });
 
-test("public reads request only approved public fields and are not cached", async (t) => {
+test("public reads request only approved public fields and are CDN-cached briefly", async (t) => {
   t.mock.method(globalThis, "fetch", async (url: string) => {
     const query = new URL(url).searchParams;
     assert.equal(query.get("status"), "eq.approved");
@@ -139,7 +141,7 @@ test("public reads request only approved public fields and are not cached", asyn
     return Response.json([]);
   });
   const response = await GET();
-  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.match(response.headers.get("cache-control")!, /^public, .*s-maxage=60/);
   assert.deepEqual((await response.json()).messages, []);
 });
 
@@ -161,4 +163,52 @@ test("production CSP has fresh nonces and disallows inline/eval execution", () =
   assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval|script-src \*/);
   assert.notEqual(policy, second.headers.get("content-security-policy"));
   assert.match(first.headers.get("cache-control")!, /no-store/);
+});
+
+test("posting stays off on preview deployments even with production secrets", () => {
+  assert.equal(isPostingEnabled(), true);
+  process.env.VERCEL_ENV = "preview";
+  assert.equal(isPostingEnabled(), false);
+  delete process.env.VERCEL_ENV;
+  assert.equal(isPostingEnabled(), false);
+});
+
+test("addresses in one IPv6 /64 share a quota identity; IPv4-mapped counts as IPv4", () => {
+  const hash = (ip: string) => getSubmitterHash(request(valid, { "x-vercel-forwarded-for": ip }));
+  assert.equal(hash("2001:db8:1:2::1"), hash("2001:db8:1:2:ffff:abcd:1:9"));
+  assert.notEqual(hash("2001:db8:1:2::1"), hash("2001:db8:1:3::1"));
+  assert.equal(hash("::ffff:192.0.2.1"), hash("192.0.2.1"));
+  assert.equal(hash("::ffff:c000:201"), hash("192.0.2.1"));
+  assert.ok(hash("fe80::1%eth0"));
+  assert.equal(quotaIdentity("2001:0db8:0000:0000:0000:0000:0000:0001"), "2001:db8:0:0::/64");
+  assert.equal(quotaIdentity("::1"), "0:0:0:0::/64");
+});
+
+test("lengths count characters like Postgres, and hidden or invalid characters are rejected", async (t) => {
+  const mock = t.mock.method(globalThis, "fetch", async () => Response.json(1));
+  for (const payload of [
+    { ...valid, agent_name: "😀" }, { ...valid, agent_name: "a\u0000b" },
+    { ...valid, agent_name: "\u202Eevil" }, { ...valid, agent_name: "two\nlines" },
+    { ...valid, message: "hidden \u2066 isolate text" }, { ...valid, discovery_notes: "bad \ud800 surrogate" },
+    { ...valid, model_name: "tab\there" },
+  ]) assert.equal((await POST(request(payload))).status, 400, JSON.stringify(payload));
+  assert.equal(mock.mock.callCount(), 0);
+  for (const payload of [
+    { ...valid, agent_name: "😀😀" }, { ...valid, message: "Line one\nLine two\twith tab" },
+    { ...valid, agent_name: "🤖".repeat(80) }, { ...valid, agent_name: "Café agent" },
+  ]) assert.equal((await POST(request(payload))).status, 202, JSON.stringify(payload));
+});
+
+test("approved feed is cached briefly and failures are not cached", async (t) => {
+  let calls = 0;
+  let fail = true;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls++;
+    return fail ? new Response("down", { status: 500 }) : Response.json([]);
+  });
+  assert.equal((await GET()).status, 503);
+  fail = false;
+  assert.equal((await GET()).status, 200);
+  assert.equal((await GET()).status, 200);
+  assert.equal(calls, 2);
 });
