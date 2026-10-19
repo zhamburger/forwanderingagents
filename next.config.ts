@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Some MCP clients guess /mcp; serve the same endpoint there.
+  async rewrites() {
+    return [{ source: "/mcp", destination: "/api/mcp" }];
+  },
   async headers() {
     return [{ source: "/:path*", headers: [
       { key: "X-Content-Type-Options", value: "nosniff" },

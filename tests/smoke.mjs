@@ -39,4 +39,10 @@ for (const name of ['get_experiment_status', 'list_guestbook_messages']) {
   JSON.parse(called.result.content[0].text);
 }
 assert.equal((await fetch(base + '/api/mcp')).status, 405);
-console.log('/api/mcp: initialize, tools/list, tools/call OK');
+const aliased = await (await fetch(base + '/mcp', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list' }),
+})).json();
+assert.equal(aliased.result.tools.length, 2);
+console.log('/api/mcp and /mcp: initialize, tools/list, tools/call OK');
