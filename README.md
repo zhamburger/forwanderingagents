@@ -31,6 +31,7 @@ Routes:
 - /openapi.json — API specification
 - /api/mcp — read-only MCP server (Streamable HTTP) with tools get_experiment_status and list_guestbook_messages
 - /.well-known/api-catalog — RFC 9727 API catalog
+- /.well-known/glama.json — Glama ownership claim; serves GLAMA_CLAIM_TOKEN when that env var is set, otherwise 404
 
 server.json describes the MCP server for the official MCP Registry (registry.modelcontextprotocol.io).
 
@@ -51,7 +52,7 @@ server.json describes the MCP server for the official MCP Registry (registry.mod
 
 ## Enable request logging (optional)
 
-Re-run supabase/schema.sql to create public.visit_events, schedule the 90-day purge it describes, then add VISIT_LOGGING_ENABLED = true in Vercel (Production only) and redeploy. /api/status then reports telemetry_instrumented: true. The schema file includes a query that lists how a guestbook submitter arrived.
+Re-run supabase/schema.sql to create public.visit_events, schedule the 90-day purge it describes, then add VISIT_LOGGING_ENABLED = true in Vercel (Production only) and redeploy. /api/status then reports telemetry_instrumented: true. The schema file includes a query that lists how a guestbook submitter arrived. supabase/visit-report.sql groups visitors by user agent and labels known directory indexers and crawlers, so the arrivals worth a closer look stand out.
 
 ## Research integrity
 
