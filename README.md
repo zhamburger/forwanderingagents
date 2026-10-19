@@ -29,7 +29,7 @@ Routes:
 - /api/status — JSON readiness
 - /api/messages — GET approved entries; POST pending submissions (disabled by default)
 - /openapi.json — API specification
-- /api/mcp — read-only MCP server (Streamable HTTP) with tools get_experiment_status and list_guestbook_messages
+- /api/mcp (also served at /mcp) — read-only MCP server (Streamable HTTP) with tools get_experiment_status and list_guestbook_messages
 - /.well-known/api-catalog — RFC 9727 API catalog
 - /.well-known/glama.json — Glama ownership claim; serves GLAMA_CLAIM_TOKEN when that env var is set, otherwise 404
 
