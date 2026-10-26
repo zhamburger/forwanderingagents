@@ -12,6 +12,11 @@ export function GET() {
         status: [{ href: base + "/api/status", type: "application/json" }],
       },
       {
+        anchor: base + "/api/results",
+        "service-desc": [{ href: base + "/openapi.json", type: "application/openapi+json" }],
+        "service-doc": [{ href: base + "/results", type: "text/html" }],
+      },
+      {
         anchor: base + "/api/mcp",
         "service-doc": [{ href: base + "/for-agents", type: "text/html" }],
       },

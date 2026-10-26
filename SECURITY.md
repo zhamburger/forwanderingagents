@@ -39,7 +39,7 @@ string, Accept header, and the same keyed address hash used for guestbook quotas
 No raw IPs, cookies, query strings, or bodies are stored. Writes happen after the
 response, failures are ignored, and each instance caps writes at 60 per visitor and
 1000 overall per minute. Network rate limits are still required against floods.
-Schedule the 90-day purge in `supabase/schema.sql`; the methodology page promises it.
+The participation migration schedules a daily 90-day purge for both visit_events and participation_events. Participation logs store only allowlisted protocol/tool names, HTTP status, outcome, phase, test marker and keyed network hash; no arguments or message bodies. They are private under RLS with public table and RPC privileges revoked.
 
 ## Before enabling writes
 
@@ -75,7 +75,4 @@ Local tests exercise input limits, provenance validation, disabled posting, quot
 responses, safe errors, and moderation responses with a mocked database. They do
 not establish production database permissions or cloud-account configuration.
 
-The development-only eslint dependency chain currently includes an unpatched
-`braces` advisory. Do not run lint against untrusted repositories/patterns. Do not
-force npm's proposed downgrade of the Next.js lint configuration to version 14.
-Revisit the advisory as upstream patches become available.
+Re-run the dependency audit when updating packages; the October 26, 2026 review reported no known advisories in the installed lockfile.

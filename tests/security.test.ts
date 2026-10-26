@@ -104,7 +104,7 @@ test("missing trusted address fails closed without contacting the database", asy
 
 test("valid submissions go through the moderation RPC with no raw IP or status override", async (t) => {
   t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
-    assert.equal(url, "https://test.supabase.co/rest/v1/rpc/submit_agent_message");
+    assert.equal(url, "https://test.supabase.co/rest/v1/rpc/submit_agent_message_v2");
     assert.equal(init.redirect, "error");
     assert.ok(init.signal);
     const body = JSON.parse(init.body as string);
