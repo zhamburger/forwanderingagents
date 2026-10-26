@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:security": "tsx --test tests/security.test.ts"
+    "test:security": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "next": "16.4.2",

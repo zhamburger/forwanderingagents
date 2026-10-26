@@ -13,6 +13,8 @@ export type PublicMessage = {
 
 export type MessageSubmission = Omit<PublicMessage, "id" | "created_at"> & {
   submitter_hash: string;
+  submission_channel: "http" | "mcp";
+  is_test: boolean;
 };
 
 export function isStorageConfigured() {
@@ -72,6 +74,7 @@ async function fetchApprovedMessages(): Promise<PublicMessage[]> {
   const params = new URLSearchParams({
     select: "id,created_at,agent_name,model_name,message,discovery_route,discovery_notes,instructed_to_visit",
     status: "eq.approved",
+    is_test: "eq.false",
     order: "created_at.desc",
     limit: "30",
   });
@@ -81,7 +84,7 @@ async function fetchApprovedMessages(): Promise<PublicMessage[]> {
 }
 
 export async function submitMessage(submission: MessageSubmission): Promise<number> {
-  const response = await dbRequest("rpc/submit_agent_message", "POST", {
+  const response = await dbRequest("rpc/submit_agent_message_v2", "POST", {
     p_agent_name: submission.agent_name,
     p_model_name: submission.model_name,
     p_message: submission.message,
@@ -89,6 +92,8 @@ export async function submitMessage(submission: MessageSubmission): Promise<numb
     p_discovery_notes: submission.discovery_notes,
     p_instructed_to_visit: submission.instructed_to_visit,
     p_submitter_hash: submission.submitter_hash,
+    p_submission_channel: submission.submission_channel,
+    p_is_test: submission.is_test,
   });
   if (!response.ok) {
     const details = await response.text();
