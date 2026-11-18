@@ -52,5 +52,5 @@ console.log('/api/mcp and /mcp: initialize, tools/list, tools/call OK');
 const invalid = await (await mcp({jsonrpc:'2.0',id:5,method:'tools/call',params:{name:'submit_guestbook_message',arguments:{is_test:true}}})).json();
 assert.equal(invalid.result.isError,true);
 const status = await (await fetch(base + '/api/status')).json();
-assert.equal(status.version,'1.1.0');
-console.log('MCP invalid submission rejected; version 1.1.0 confirmed');
+assert.equal(status.version,'1.1.1');
+console.log('MCP invalid submission rejected; version 1.1.1 confirmed');
