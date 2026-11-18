@@ -1,5 +1,5 @@
 export const EXPERIMENT_PHASE = "mcp-participation-v2";
-export const SERVER_VERSION = "1.1.0";
+export const SERVER_VERSION = "1.1.1";
 
 export const submissionSchema = {
   type: "object",
